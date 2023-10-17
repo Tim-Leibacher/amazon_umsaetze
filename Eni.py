@@ -1,30 +1,31 @@
+import json
 import tkinter as tk
+from datetime import datetime
 from tkinter.filedialog import *
 import openpyxl
 import shutil
 import os
-from tkinter import filedialog
+import requests
+import cred
 
 
 def read_currencies_from_file():
-    data = {}
+    values = {}
+    file_path = "currencies.json"
+
     try:
-        with open("currencies.txt", "r") as file:
-            for line in file:
-                line = line.strip()
-                if line:  # Check if the line is not empty
-                    currency, adjustment = line.split(":")
-                    data[currency] = float(adjustment)
-        return data
-    except FileNotFoundError:
-        # If the file doesn't exist, return an empty dictionary
-        return {}
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+            values.update(data)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error reading JSON file: {e}")
+
+    return values
 
 
 def write_currencies_to_file(data):
-    with open("currencies.txt", "w") as file:
-        for currency, adjustment in data.items():
-            file.write(f"{currency}:{adjustment}\n")
+    with open("currencies.json", "w") as file:
+        json.dump(data, file, indent=4)
 
 
 def get_file():
@@ -38,7 +39,7 @@ currency_adjustments = read_currencies_from_file()
 
 def write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu):
     # Dialog zur Auswahl der Excel-Datei öffnen
-    #file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
+    # file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
     # Specify the path to the Downloads folder
     downloads_folder = os.path.expanduser("~/Downloads")
 
@@ -177,25 +178,65 @@ def main():
 def get_total_from_list(data):
     total_sum = 0
     for row in data:
-        currency_code = row.get('TRANSACTION_CURRENCY_CODE')
-        total_value = float(row.get('TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL', 0)) if row.get(
-            'TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL') else 0
+        if row.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL"):
 
-        # Check if the currency code is not EUR or CHF
-        if currency_code not in ('EUR', 'CHF'):
-            if currency_code not in currency_adjustments:
-                # Ask the user for an adjustment value
-                user_input = input(f"Enter an adjustment value for {currency_code}: ")
-                try:
-                    adjustment = float(user_input)
-                    currency_adjustments[currency_code] = adjustment
-                except ValueError:
-                    print(f"Invalid adjustment value for {currency_code}. Skipping adjustment.")
-                else:
-                    total_value *= adjustment
-        total_sum += total_value
+            currency_code = row.get('TRANSACTION_CURRENCY_CODE')
+            date_long = row.get('TAX_CALCULATION_DATE')
+            date_object = datetime.strptime(date_long, "%d-%m-%Y")
+            date = date_object.strftime("%m-%Y")
+            total_value = float(row.get('TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL', 0)) if row.get(
+                'TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL') else 0
+
+            # Check if the currency code is not EUR or CHF
+            if currency_code not in ('EUR', 'CHF'):
+                if date not in currency_adjustments or currency_code not in currency_adjustments[date]:
+                    # Ask the user for an adjustment value
+                    user_input = input(f"Enter Kurs für {currency_code} am {date} : ")
+                    try:
+                        adjustment = float(user_input)
+                        currency_adjustments.setdefault(date, {})
+                        currency_adjustments[date][currency_code] = adjustment
+                    except ValueError:
+                        print(f"Invalid adjustment value for {currency_code}. Skipping adjustment.")
+                    else:
+                        total_value *= adjustment
+            total_sum += total_value
 
     return total_sum
+
+
+def get_currency_rate(year, month, currency):
+    # Set API Endpoint and API key
+    endpoint = 'history'
+    access_key = cred.api_key
+
+    # Construct the API URL
+    url = f'https://v6.exchangerate-api.com/v6/{access_key}/{endpoint}/CHF/{year}/{month}/01'
+
+    try:
+        # Send a GET request to the API endpoint
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+
+        # Parse the JSON response
+        exchange_rates = response.json()
+
+        print(exchange_rates)
+        # Specify the file name and path
+        file_name = "currencies.json"
+        file_path = os.path.join(os.getcwd(), file_name)  # Save the file in the current working directory
+
+        # Open the file in append mode and write the JSON string
+        with open(file_path, 'a') as file:
+            file.write(exchange_rates + '\n')  # Append the JSON string with a newline character
+
+        print(f"JSON data appended to {file_name}")
+
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error making the request: {e}")
+    except KeyError as e:
+        print(f"Key not found in JSON response: {e}")
 
 
 if __name__ == "__main__":
@@ -203,5 +244,5 @@ if __name__ == "__main__":
     root.withdraw()  # Hide the main window
 
     main()  # Run the main function
-
+    # get_currency_rate("2023","01","CHF")
     root.destroy()  # Close the tkinter window
