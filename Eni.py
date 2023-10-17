@@ -10,17 +10,16 @@ import cred
 
 
 def read_currencies_from_file():
-    values = {}
     file_path = "currencies.json"
+    data = {}
 
     try:
         with open(file_path, 'r') as file:
             data = json.load(file)
-            values.update(data)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"Error reading JSON file: {e}")
 
-    return values
+    return data
 
 
 def write_currencies_to_file(data):
@@ -107,7 +106,7 @@ def main():
 
                 # Let the user choose which numbers to change
                 user_input = input(
-                    "Enter the numbers you want to change (comma-separated), or press Enter to continue: ")
+                    "Die Nummern mit falschen ID Komma getrennt angeben, oder Enter zum weiterfahren: ")
                 numbers_to_change = [int(num.strip()) for num in user_input.split(",") if num.strip().isdigit()]
 
                 count = 1  # Reset the counter
@@ -157,8 +156,6 @@ def main():
                 seller_de_eu = get_total_from_list(seller_de_eu)
                 total = get_total_from_list(total)
 
-                write_currencies_to_file(currency_adjustments)
-
                 print(f"Market DE -> DE: {market_de_de}")
                 print(f"Market DE -> EU: {market_de_eu}")
                 print(f"Market DE -> CH: {market_de_ch}")
@@ -170,48 +167,46 @@ def main():
                 print(f"Total: {total}")
                 print(f"Total: {total_sum}")
                 print()
-                write_currencies_to_file(currency_adjustments)
 
+                write_currencies_to_file(currency_adjustments)
                 write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu)
 
 
 def get_total_from_list(data):
     total_sum = 0
     for row in data:
-        if row.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL"):
+        if row.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL") is not None and row.get("TAX_CALCULATION_DATE") != "":
 
             currency_code = row.get('TRANSACTION_CURRENCY_CODE')
             date_long = row.get('TAX_CALCULATION_DATE')
             date_object = datetime.strptime(date_long, "%d-%m-%Y")
-            date = date_object.strftime("%m-%Y")
-            total_value = float(row.get('TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL', 0)) if row.get(
-                'TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL') else 0
+            date = date_object.strftime("%Y-%m-%d")
+            total_value = float(row.get('TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL', 0))
 
             # Check if the currency code is not EUR or CHF
-            if currency_code not in ('EUR', 'CHF'):
-                if date not in currency_adjustments or currency_code not in currency_adjustments[date]:
+            if currency_code not in 'EUR':
+                if date not in currency_adjustments:
                     # Ask the user for an adjustment value
-                    user_input = input(f"Enter Kurs für {currency_code} am {date} : ")
-                    try:
-                        adjustment = float(user_input)
-                        currency_adjustments.setdefault(date, {})
-                        currency_adjustments[date][currency_code] = adjustment
-                    except ValueError:
-                        print(f"Invalid adjustment value for {currency_code}. Skipping adjustment.")
-                    else:
-                        total_value *= adjustment
+                    # user_input = input(f"Enter Kurs für {currency_code} am {date} : ")
+                    rate = get_currency_rate(date, currency_code)
+                    print(f"Rate for  {currency_code} at {date} is {rate}")
+                    total_value /= rate
+                else:
+                    print(f"Rate for  {currency_code} at {date} is {currency_adjustments.get(date, {}).get('rates', {}).get(currency_code, None)}")
+                    total_value /= currency_adjustments.get(date, {}).get('rates', {}).get(currency_code, None)
+
             total_sum += total_value
 
-    return total_sum
+    return total_sum if total_sum is not None else 0
 
 
-def get_currency_rate(year, month, currency):
+def get_currency_rate(date, currency_code):
     # Set API Endpoint and API key
     endpoint = 'history'
     access_key = cred.api_key
 
     # Construct the API URL
-    url = f'https://v6.exchangerate-api.com/v6/{access_key}/{endpoint}/CHF/{year}/{month}/01'
+    url = f'http://api.exchangeratesapi.io/v1/{date}?access_key={access_key}'
 
     try:
         # Send a GET request to the API endpoint
@@ -221,22 +216,15 @@ def get_currency_rate(year, month, currency):
         # Parse the JSON response
         exchange_rates = response.json()
 
-        print(exchange_rates)
-        # Specify the file name and path
-        file_name = "currencies.json"
-        file_path = os.path.join(os.getcwd(), file_name)  # Save the file in the current working directory
+        json_values = {
+            'date': date,
+            'rates': exchange_rates['rates']
+        }
 
-        # Open the file in append mode and write the JSON string
-        with open(file_path, 'a') as file:
-            file.write(exchange_rates + '\n')  # Append the JSON string with a newline character
-
-        print(f"JSON data appended to {file_name}")
-
-
+        currency_adjustments[date] = {'rates': exchange_rates['rates']}
+        return exchange_rates['rates'][currency_code]
     except requests.exceptions.RequestException as e:
         print(f"Error making the request: {e}")
-    except KeyError as e:
-        print(f"Key not found in JSON response: {e}")
 
 
 if __name__ == "__main__":
