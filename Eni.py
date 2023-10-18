@@ -36,7 +36,7 @@ def get_file():
 currency_adjustments = read_currencies_from_file()
 
 
-def write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu):
+def write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu, total, name):
     # Dialog zur Auswahl der Excel-Datei öffnen
     # file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
     # Specify the path to the Downloads folder
@@ -48,7 +48,17 @@ def write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_d
         return
 
     # Specify the full path for the copy
-    copy_file_path = os.path.join(downloads_folder, "Vorlage_Umsätze Amazon Umsatzsteuer_leer_copy.xlsx")
+    copy_file_path = os.path.join(downloads_folder, f"{name}.xlsx")
+
+    # Split the input string by underscore
+    parts = name.split('_')
+    firm_name = ""
+    date = ""
+    if len(parts) == 2:
+        firm_name = parts[0]
+        date = parts[1]
+    else:
+        print("Invalid input format. Expected 'Firmename_Month Year'.")
 
     try:
         # Check if the copy file already exists
@@ -69,6 +79,9 @@ def write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_d
         copy_sheet['E10'] = market_de_ch
         copy_sheet['G16'] = seller_de_de
         copy_sheet['E24'] = seller_de_eu
+        copy_sheet['C69'] = total
+        copy_sheet['A1'] = firm_name
+        copy_sheet['D2'] = "Steuermeldung " + date
 
         # Save the copy
         copy_workbook.save(copy_file_path)
@@ -98,8 +111,8 @@ def main():
                 # Display BUYER_VAT_NUMBER values with numbers
                 for row in data:
                     if (row.get('TAX_COLLECTION_RESPONSIBILITY') == 'SELLER' and
-                            row.get('SALE_ARRIVAL_COUNTRY') == 'DE' and
-                            row.get('DEPARTURE_COUNTRY') == 'DE'):
+                            row.get('SALE_ARRIVAL_COUNTRY') != 'DE' and
+                            row.get('SALE_DEPART_COUNTRY') == 'DE'):
                         buyer_vat_number = row.get('BUYER_VAT_NUMBER')
                         print(f"{count}:\t{buyer_vat_number}")
                         count += 1
@@ -113,41 +126,40 @@ def main():
 
                 for row in data:
                     if (row.get('TAX_COLLECTION_RESPONSIBILITY') == 'SELLER' and
-                            row.get('SALE_ARRIVAL_COUNTRY') == 'DE' and
-                            row.get('DEPARTURE_COUNTRY') == 'DE'):
+                            row.get('SALE_ARRIVAL_COUNTRY') != 'DE' and
+                            row.get('SALE_DEPART_COUNTRY') == 'DE'):
                         if count in numbers_to_change:
                             row['TAX_COLLECTION_RESPONSIBILITY'] = 'MARKETPLACE'
                         count += 1
 
+
                 market_de_de = [row for row in data if
                                 row.get('TAX_COLLECTION_RESPONSIBILITY') == 'MARKETPLACE' and
                                 row.get('SALE_ARRIVAL_COUNTRY') == 'DE' and
-                                row.get('DEPARTURE_COUNTRY') == 'DE']
+                                row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 market_de_eu = [row for row in data if
                                 row.get('TAX_COLLECTION_RESPONSIBILITY') == 'MARKETPLACE' and
                                 row.get('SALE_ARRIVAL_COUNTRY') not in ('DE', 'CH') and
-                                row.get('DEPARTURE_COUNTRY') == 'DE']
+                                row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 market_de_ch = [row for row in data if
-                                row.get('TAX_COLLECTION_RESPONSIBILITY') == 'MARKETPLACE' and
+                                row.get('TAX_COLLECTION_RESPONSIBILITY') in ('MARKETPLACE', 'SELLER') and
                                 row.get('SALE_ARRIVAL_COUNTRY') == 'CH' and
-                                row.get('DEPARTURE_COUNTRY') == 'DE']
+                                row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 seller_de_de = [row for row in data if
                                 row.get('TAX_COLLECTION_RESPONSIBILITY') == 'SELLER' and
                                 row.get('SALE_ARRIVAL_COUNTRY') == 'DE' and
-                                row.get('DEPARTURE_COUNTRY') == 'DE']
+                                row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 seller_de_eu = [row for row in data if
                                 row.get('TAX_COLLECTION_RESPONSIBILITY') == 'SELLER' and
                                 row.get('SALE_ARRIVAL_COUNTRY') not in ('DE', 'CH') and
-                                row.get('DEPARTURE_COUNTRY') == 'DE']
+                                row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 total = [row for row in data if
-                         row.get('DEPARTURE_COUNTRY') == 'DE' and not
-                         (row.get('TAX_COLLECTION_RESPONSIBILITY') == 'SELLER' and row.get(
-                             'SALE_ARRIVAL_COUNTRY') == 'CH')]
+                         row.get('SALE_DEPART_COUNTRY') == 'DE']
 
                 market_de_de = get_total_from_list(market_de_de)
                 market_de_eu = get_total_from_list(market_de_eu)
@@ -166,25 +178,24 @@ def main():
 
                 print(f"Total: {total}")
                 print(f"Total: {total_sum}")
-                print()
 
                 write_currencies_to_file(currency_adjustments)
-                write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu)
+                write_excel(market_de_de, market_de_eu, market_de_ch, seller_de_de, seller_de_eu, total, os.path.basename(filename)[:len(os.path.basename(filename)) - 4])
 
 
 def get_total_from_list(data):
     total_sum = 0
     for row in data:
-        if row.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL") is not None and row.get("TAX_CALCULATION_DATE") != "":
-
+        value = row.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_INCL")
+        if value is not None and value.strip() != "":
             currency_code = row.get('TRANSACTION_CURRENCY_CODE')
-            date_long = row.get('TAX_CALCULATION_DATE')
+            date_long = row.get('TRANSACTION_COMPLETE_DATE')
             date_object = datetime.strptime(date_long, "%d-%m-%Y")
             date = date_object.strftime("%Y-%m-%d")
-            total_value = float(row.get('TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL', 0))
+            total_value = float(value)
 
             # Check if the currency code is not EUR or CHF
-            if currency_code not in 'EUR':
+            if currency_code not in 'EUR' and row.get("TRANSACTION_COMPLETE_DATE") != "":
                 if date not in currency_adjustments:
                     # Ask the user for an adjustment value
                     # user_input = input(f"Enter Kurs für {currency_code} am {date} : ")
@@ -202,7 +213,6 @@ def get_total_from_list(data):
 
 def get_currency_rate(date, currency_code):
     # Set API Endpoint and API key
-    endpoint = 'history'
     access_key = cred.api_key
 
     # Construct the API URL
@@ -215,11 +225,6 @@ def get_currency_rate(date, currency_code):
 
         # Parse the JSON response
         exchange_rates = response.json()
-
-        json_values = {
-            'date': date,
-            'rates': exchange_rates['rates']
-        }
 
         currency_adjustments[date] = {'rates': exchange_rates['rates']}
         return exchange_rates['rates'][currency_code]
